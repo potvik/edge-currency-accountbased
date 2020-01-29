@@ -12,7 +12,9 @@ import {
   InsufficientFundsError,
   NoAmountSpecifiedError
 } from 'edge-core-js/types'
-import eosjs from 'eosjs'
+import { Api, JsonRpc } from 'eosjs'
+import EosApi from 'eosjs-api'
+import { JsSignatureProvider } from 'eosjs/dist/eosjs-jssig'
 
 import { CurrencyEngine } from '../common/engine.js'
 import {
@@ -43,7 +45,7 @@ type EosFunction =
   | 'getInfo'
   | 'getKeyAccounts'
   | 'getOutgoingTransactions'
-  | 'transaction'
+  | 'transact'
 
 export class EosEngine extends CurrencyEngine {
   // TODO: Add currency specific params
@@ -442,14 +444,40 @@ export class EosEngine extends CurrencyEngine {
       }
 
       case 'getCurrencyBalance':
-      case 'getInfo':
-      case 'transaction': {
+      case 'getInfo': {
         const { eosNodes } = this.currencyInfo.defaultSettings.otherSettings
         const randomNodes = pickRandom(eosNodes, 3)
         out = await asyncWaterfall(
           randomNodes.map(server => async () => {
-            const eosServer = eosjs({ ...eosConfig, httpEndpoint: server })
+            const eosServer = EosApi({ ...eosConfig, httpEndpoint: server })
             const result = await eosServer[func](...params)
+            return { server, result }
+          })
+        )
+        break
+      }
+      case 'transact': {
+        const { eosNodes } = this.currencyInfo.defaultSettings.otherSettings
+        const randomNodes = pickRandom(eosNodes, 30)
+        out = await asyncWaterfall(
+          randomNodes.map(server => async () => {
+            const rpc = new JsonRpc(server, { fetch: eosConfig.fetch })
+            const keys = params[1].keyProvider ? params[1].keyProvider : []
+            params[1] = {
+              ...params[1],
+              blocksBehind: 3,
+              expireSeconds: 30
+            }
+            const signatureProvider = new JsSignatureProvider(keys)
+            const eos = new Api({
+              // Pass in new authorityProvider
+              // authorityProvider: new CosignAuthorityProvider(server),
+              rpc,
+              signatureProvider,
+              textDecoder: new TextDecoder(),
+              textEncoder: new TextEncoder()
+            })
+            const result = await eos[func](...params)
             return { server, result }
           })
         )
@@ -628,8 +656,8 @@ export class EosEngine extends CurrencyEngine {
     if (bns.gt(nativeAmount, nativeBalance)) {
       throw new InsufficientFundsError()
     }
-    const DecimalPad = eosjs.modules.format.DecimalPad
-    const quantity = DecimalPad(exchangeAmount, 4) + ` ${currencyCode}`
+
+    const quantity = bns.toFixed(exchangeAmount, 4, 4) + ` ${currencyCode}`
     let memo = ''
     if (
       edgeSpendInfo.spendTargets[0].otherParams &&
@@ -660,7 +688,7 @@ export class EosEngine extends CurrencyEngine {
     }
 
     // Create an unsigned transaction to catch any errors
-    await this.multicastServers('transaction', transactionJson, {
+    await this.multicastServers('transact', transactionJson, {
       sign: false,
       broadcast: false
     })
@@ -757,7 +785,7 @@ export class EosEngine extends CurrencyEngine {
     if (this.walletInfo.keys.eosOwnerKey) {
       keyProvider.push(this.walletInfo.keys.eosOwnerKey)
     }
-    await this.multicastServers('transaction', otherParams.transactionJson, {
+    await this.multicastServers('transact', otherParams.transactionJson, {
       keyProvider,
       sign: true,
       broadcast: false
@@ -782,7 +810,7 @@ export class EosEngine extends CurrencyEngine {
     }
     try {
       const signedTx = await this.multicastServers(
-        'transaction',
+        'transact',
         otherParams.transactionJson,
         {
           keyProvider,
