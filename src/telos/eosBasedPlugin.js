@@ -1,7 +1,7 @@
 /**
  * Created by paul on 8/8/17.
  */
-/* global fetch */
+/* global */
 // @flow
 
 import { bns } from 'biggystring'
@@ -9,6 +9,7 @@ import {
   type EdgeCorePluginOptions,
   type EdgeCurrencyEngine,
   type EdgeCurrencyEngineOptions,
+  type EdgeCurrencyInfo,
   type EdgeCurrencyPlugin,
   type EdgeEncodeUri,
   type EdgeIo,
@@ -21,21 +22,8 @@ import { CurrencyPlugin } from '../common/plugin.js'
 import { getDenomInfo, getEdgeInfoServer } from '../common/utils.js'
 import { getFetchCors, getFetchJson } from '../react-native-io.js'
 import { EosEngine } from './eosEngine'
-import { currencyInfo } from './eosInfo.js'
 
 const { ecc } = eosjs.modules
-
-// ----MAIN NET----
-export const eosConfig = {
-  chainId: 'aca376f206b8fc25a6ed44dbdc66547c36c6c33e3a119ffbeaef943642f0e906', // main net
-  keyProvider: [],
-  httpEndpoint: '', // main net
-  fetch: fetch,
-  expireInSeconds: 60,
-  sign: false, // sign the transaction with a private key. Leaving a transaction unsigned avoids the need to provide a private key
-  broadcast: false, // post the transaction to the blockchain. Use false to obtain a fully signed transaction
-  verbose: false // verbose logging such as API activity
-}
 
 const validCharacters = '12345abcdefghijklmnopqrstuvwxyz'
 
@@ -55,26 +43,26 @@ export function checkAddress(address: string): boolean {
   return true
 }
 
+// when EosPlugin is created, need to grab right currencyInfo
 export class EosPlugin extends CurrencyPlugin {
   otherMethods: Object
   eosServer: Object
 
-  constructor(io: EdgeIo, fetchCors: Function) {
-    super(io, 'eos', currencyInfo)
+  constructor(io: EdgeIo, fetchCors: Function, currencyInfo: EdgeCurrencyInfo) {
+    // what about the hard-coded 'eos'?
+    // second parameter was 'eos', technically that *is* plugin name...
+    super(io, currencyInfo.pluginName, currencyInfo)
+    const eosJsConfig = currencyInfo.defaultSettings.otherSettings.eosJsConfig
+    eosJsConfig.httpEndpoint = this.currencyInfo.defaultSettings.otherSettings.eosNodes[0]
+    eosJsConfig.fetch = fetchCors
 
-    eosConfig.httpEndpoint = this.currencyInfo.defaultSettings.otherSettings.eosNodes[0]
-    eosConfig.fetch = fetchCors
-
-    this.eosServer = eosjs(eosConfig)
+    this.eosServer = eosjs(eosJsConfig)
   }
 
   async importPrivateKey(privateKey: string): Promise<Object> {
     const strippedPrivateKey = privateKey.replace(/ /g, '') // should be in WIF format
     if (strippedPrivateKey.length !== 51) {
       throw new Error('Private key wrong length')
-    }
-    if (!ecc.isValidPrivate(strippedPrivateKey)) {
-      throw new Error('Invalid private key')
     }
     return {
       eosOwnerKey: strippedPrivateKey,
@@ -84,8 +72,8 @@ export class EosPlugin extends CurrencyPlugin {
 
   async createPrivateKey(walletType: string): Promise<Object> {
     const type = walletType.replace('wallet:', '')
-
-    if (type === 'eos') {
+    const currencyInfoType = this.currencyInfo.walletType.replace('wallet:', '')
+    if (type === currencyInfoType) {
       // TODO: User currency library to create private key as a string
       // Use io.random() for random number generation
       // Multiple keys can be created and stored here. ie. If there is both a mnemonic and key format,
@@ -102,7 +90,9 @@ export class EosPlugin extends CurrencyPlugin {
 
   async derivePublicKey(walletInfo: EdgeWalletInfo): Promise<Object> {
     const type = walletInfo.type.replace('wallet:', '')
-    if (type === 'eos') {
+    const currencyInfoType = this.currencyInfo.walletType.replace('wallet:', '')
+
+    if (type === currencyInfoType) {
       // TODO: User currency library to derive the public keys/addresses from the private key.
       // Multiple keys can be generated and stored if needed. Do not store an HD chain
       // but rather just different versions of the master public key
@@ -113,15 +103,19 @@ export class EosPlugin extends CurrencyPlugin {
       if (walletInfo.keys.eosOwnerKey) {
         ownerPublicKey = ecc.privateToPublic(walletInfo.keys.eosOwnerKey)
       }
+      console.log('privateKey: ', walletInfo.keys.eosKey)
+      console.log('publicKey: ', publicKey)
       return { publicKey, ownerPublicKey }
     } else {
       throw new Error('InvalidWalletType')
     }
   }
 
+  // will need to check URI
   async parseUri(uri: string): Promise<EdgeParsedUri> {
-    const { edgeParsedUri } = this.parseUriCommon(currencyInfo, uri, {
-      eos: true
+    const { edgeParsedUri } = this.parseUriCommon(this.currencyInfo, uri, {
+      // network
+      [this.currencyInfo.pluginName]: true
     })
 
     const valid = checkAddress(edgeParsedUri.publicAddress || '')
@@ -138,15 +132,21 @@ export class EosPlugin extends CurrencyPlugin {
     }
     let amount
     if (typeof obj.nativeAmount === 'string') {
-      const currencyCode: string = 'EOS'
+      const currencyCode: string = this.currencyInfo.currencyCode
       const nativeAmount: string = obj.nativeAmount
-      const denom = getDenomInfo(currencyInfo, currencyCode)
+      const denom = getDenomInfo(this.currencyInfo, currencyCode)
       if (!denom) {
         throw new Error('InternalErrorInvalidCurrencyCode')
       }
       amount = bns.div(nativeAmount, denom.multiplier, 4)
     }
-    const encodedUri = this.encodeUriCommon(obj, 'eos', amount)
+    // change this "eos"?
+    // 2nd paramter used for "network" / "scheme"
+    const encodedUri = this.encodeUriCommon(
+      obj,
+      this.currencyInfo.pluginName,
+      amount
+    )
     return encodedUri
   }
 
@@ -165,7 +165,10 @@ export class EosPlugin extends CurrencyPlugin {
   }
 }
 
-export function makeEosPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
+export function makeEosBasedPluginInner(
+  opts: EdgeCorePluginOptions,
+  currencyInfo: EdgeCurrencyInfo
+): EdgeCurrencyPlugin {
   const { io } = opts
   const fetchJson = getFetchJson(opts)
 
@@ -173,7 +176,7 @@ export function makeEosPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
   function makeCurrencyTools(): Promise<EosPlugin> {
     if (toolsPromise != null) return toolsPromise
     const fetch = getFetchCors(opts)
-    toolsPromise = Promise.resolve(new EosPlugin(io, fetch))
+    toolsPromise = Promise.resolve(new EosPlugin(io, fetch, currencyInfo))
     return toolsPromise
   }
 
@@ -216,7 +219,10 @@ export function makeEosPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
     getActivationCost: async (): Promise<string> => {
       try {
         const infoServer = getEdgeInfoServer()
-        const prices = await fetchJson(`${infoServer}/v1/eosPrices`)
+        const lowerCaseCurrencyCode = this.currencyInfo.currencyCode.toLowerCase()
+        const prices = await fetchJson(
+          `${infoServer}/v1/${lowerCaseCurrencyCode}Prices`
+        )
         const totalEos =
           Number(prices.ram) * 8 +
           Number(prices.net) * 2 +
