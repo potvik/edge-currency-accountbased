@@ -9,6 +9,7 @@ import {
   type EdgeCorePluginOptions,
   type EdgeCurrencyEngine,
   type EdgeCurrencyEngineOptions,
+  type EdgeCurrencyInfo,
   type EdgeCurrencyPlugin,
   type EdgeEncodeUri,
   type EdgeFetchFunction,
@@ -26,12 +27,17 @@ import { EosEngine } from './eosEngine'
 import { currencyInfo } from './eosInfo.js'
 
 // ----MAIN NET----
-export const eosConfig = {
+export const eosJsConfig = {
   chainId: 'aca376f206b8fc25a6ed44dbdc66547c36c6c33e3a119ffbeaef943642f0e906', // main net
   keyProvider: [],
   httpEndpoint: '', // main net
   fetch: fetch,
   verbose: false // verbose logging such as API activity
+}
+
+export const makeEosPlugin = (opts: EdgeCorePluginOptions) => {
+  currencyInfo.defaultSettings.otherSettings.eosConfig = eosJsConfig
+  return makeEosBasedPluginInner(opts, currencyInfo)
 }
 
 const validCharacters = '12345abcdefghijklmnopqrstuvwxyz'
@@ -59,7 +65,8 @@ export class EosPlugin extends CurrencyPlugin {
   constructor(io: EdgeIo, fetchCors: EdgeFetchFunction) {
     super(io, 'eos', currencyInfo)
 
-    eosConfig.httpEndpoint = this.currencyInfo.defaultSettings.otherSettings.eosNodes[0]
+    const eosConfig = currencyInfo.defaultSettings.otherSettings.eosConfig
+    eosConfig.httpEndpoint = currencyInfo.defaultSettings.otherSettings.eosNodes[0]
     eosConfig.fetch = fetchCors
     this.eosServer = EosApi(eosConfig)
   }
@@ -147,7 +154,10 @@ export class EosPlugin extends CurrencyPlugin {
   }
 }
 
-export function makeEosPlugin(opts: EdgeCorePluginOptions): EdgeCurrencyPlugin {
+export function makeEosBasedPluginInner(
+  opts: EdgeCorePluginOptions,
+  currencyInfo: EdgeCurrencyInfo
+): EdgeCurrencyPlugin {
   const { io, log } = opts
   const fetch = getFetchCors(opts)
 
