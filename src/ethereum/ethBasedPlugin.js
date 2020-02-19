@@ -10,6 +10,7 @@ import {
   type EdgeCorePluginOptions,
   type EdgeCurrencyEngine,
   type EdgeCurrencyEngineOptions,
+  type EdgeCurrencyInfo,
   type EdgeCurrencyPlugin,
   type EdgeEncodeUri,
   type EdgeIo,
@@ -18,14 +19,12 @@ import {
   type EdgeWalletInfo
 } from 'edge-core-js/types'
 import EthereumUtil from 'ethereumjs-util'
-import ethWallet from 'ethereumjs-wallet'
+import ethJsWallet from 'ethereumjs-wallet'
 
 import { CurrencyPlugin } from '../common/plugin.js'
 import { getDenomInfo, hexToBuf } from '../common/utils.js'
 import { EthereumEngine } from './ethEngine.js'
 import { currencyInfo } from './ethInfo.js'
-
-export { calcMiningFee } from './ethMiningFees.js'
 
 const defaultNetworkFees = {
   default: {
@@ -65,26 +64,26 @@ const defaultNetworkFees = {
 }
 
 export class EthereumPlugin extends CurrencyPlugin {
-  constructor (io: EdgeIo) {
-    super(io, 'ethereum', currencyInfo)
+  constructor (io: EdgeIo, currencyInfo: EdgeCurrencyInfo) {
+    super(io, currencyInfo.pluginName, currencyInfo)
   }
 
   async importPrivateKey (passPhrase: string): Promise<Object> {
     const strippedPassPhrase = passPhrase.replace('0x', '').replace(/ /g, '')
     const buffer = Buffer.from(strippedPassPhrase, 'hex')
     if (buffer.length !== 32) throw new Error('Private key wrong length')
-    const ethereumKey = buffer.toString('hex')
-    const wallet = ethWallet.fromPrivateKey(buffer)
+    const key = buffer.toString('hex')
+    const wallet = ethJsWallet.fromPrivateKey(buffer)
     wallet.getAddressString()
     return {
-      ethereumKey
+      [`${currencyInfo.pluginName}Key`]: key
     }
   }
 
   async createPrivateKey (walletType: string): Promise<Object> {
     const type = walletType.replace('wallet:', '')
 
-    if (type === 'ethereum') {
+    if (type === currencyInfo.pluginName) {
       const { io } = this
       const cryptoObj = {
         randomBytes: size => {
@@ -92,11 +91,13 @@ export class EthereumPlugin extends CurrencyPlugin {
           return Buffer.from(array)
         }
       }
-      ethWallet.overrideCrypto(cryptoObj)
+      ethJsWallet.overrideCrypto(cryptoObj)
 
-      const wallet = ethWallet.generate(false)
-      const ethereumKey = wallet.getPrivateKeyString().replace('0x', '')
-      return { ethereumKey }
+      const wallet = ethJsWallet.generate(false)
+      const key = wallet.getPrivateKeyString().replace('0x', '')
+      return {
+        [`${currencyInfo.pluginName}Key`]: key
+      }
     } else {
       throw new Error('InvalidWalletType')
     }
@@ -104,9 +105,9 @@ export class EthereumPlugin extends CurrencyPlugin {
 
   async derivePublicKey (walletInfo: EdgeWalletInfo): Promise<Object> {
     const type = walletInfo.type.replace('wallet:', '')
-    if (type === 'ethereum') {
-      const privKey = hexToBuf(walletInfo.keys.ethereumKey)
-      const wallet = ethWallet.fromPrivateKey(privKey)
+    if (type === currencyInfo.pluginName) {
+      const privKey = hexToBuf(walletInfo.keys[`${currencyInfo.pluginName}Key`])
+      const wallet = ethJsWallet.fromPrivateKey(privKey)
 
       const publicKey = wallet.getAddressString()
       return { publicKey }
@@ -120,13 +121,17 @@ export class EthereumPlugin extends CurrencyPlugin {
     currencyCode?: string,
     customTokens?: Array<EdgeMetaToken>
   ): Promise<EdgeParsedUri> {
-    const networks = { ethereum: true, ether: true }
+    const networks = {}
+    const { uriNetworks } = currencyInfo.defaultSettings.otherSettings
+    for (const network of uriNetworks) {
+      networks[network] = true
+    }
 
     const { parsedUri, edgeParsedUri } = this.parseUriCommon(
       currencyInfo,
       uri,
       networks,
-      currencyCode || 'ETH',
+      currencyCode || currencyInfo.currencyCode,
       customTokens
     )
     let address = ''
@@ -141,7 +146,8 @@ export class EthereumPlugin extends CurrencyPlugin {
       prefix = 'pay' // The default prefix according to EIP-681 is "pay"
     }
     address = contractAddress
-    const valid = EthereumUtil.isValidAddress(address || '')
+    // is lowercase address valid?
+    const valid = EthereumUtil.isValidAddress(address.toLowerCase() || '')
     if (!valid) {
       throw new Error('InvalidPublicAddressError')
     }
@@ -165,8 +171,8 @@ export class EthereumPlugin extends CurrencyPlugin {
       } catch (e) {
         throw e
       }
-
-      const type = parsedUri.query.type || 'ERC20'
+      const { ercTokenStandard } = currencyInfo.defaultSettings.otherSettings
+      const type = parsedUri.query.type || ercTokenStandard
 
       const edgeParsedUriToken: EdgeParsedUri = {
         token: {
@@ -188,7 +194,8 @@ export class EthereumPlugin extends CurrencyPlugin {
     customTokens?: Array<EdgeMetaToken>
   ): Promise<string> {
     const { publicAddress, nativeAmount, currencyCode } = obj
-    const valid = EthereumUtil.isValidAddress(publicAddress)
+    // make sure that lowerCase is okay
+    const valid = EthereumUtil.isValidAddress(publicAddress.toLowerCase())
     if (!valid) {
       throw new Error('InvalidPublicAddressError')
     }
@@ -196,7 +203,7 @@ export class EthereumPlugin extends CurrencyPlugin {
     if (typeof nativeAmount === 'string') {
       const denom = getDenomInfo(
         currencyInfo,
-        currencyCode || 'ETH',
+        currencyCode || currencyInfo.currencyCode,
         customTokens
       )
       if (!denom) {
@@ -204,20 +211,21 @@ export class EthereumPlugin extends CurrencyPlugin {
       }
       amount = bns.div(nativeAmount, denom.multiplier, 18)
     }
-    const encodedUri = this.encodeUriCommon(obj, 'ethereum', amount)
+    const encodedUri = this.encodeUriCommon(obj, currencyInfo.pluginName, amount)
     return encodedUri
   }
 }
 
-export function makeEthereumPlugin (
-  opts: EdgeCorePluginOptions
+export function makeEthereumBasedPluginInner (
+  opts: EdgeCorePluginOptions,
+  currencyInfo: EdgeCurrencyInfo
 ): EdgeCurrencyPlugin {
   const { io, initOptions } = opts
 
   let toolsPromise: Promise<EthereumPlugin>
   function makeCurrencyTools (): Promise<EthereumPlugin> {
     if (toolsPromise != null) return toolsPromise
-    toolsPromise = Promise.resolve(new EthereumPlugin(io))
+    toolsPromise = Promise.resolve(new EthereumPlugin(io, currencyInfo))
     return toolsPromise
   }
 

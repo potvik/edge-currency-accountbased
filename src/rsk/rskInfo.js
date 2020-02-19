@@ -11,7 +11,9 @@ const otherSettings: RskSettings = {
   etherscanApiServers: [
     'https://blockscout.com/rsk/mainnet'
   ],
-  iosAllowedTokens: { RIF: true }
+  iosAllowedTokens: { RIF: true },
+  uriNetworks: ['rsk', 'rbtc'],
+  ercTokenStandard: 'RRC20'
 }
 
 const defaultSettings: any = {
