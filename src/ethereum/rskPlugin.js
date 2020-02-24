@@ -2,25 +2,31 @@
 // @flow
 
 import type { EdgeCurrencyInfo, EdgeCorePluginOptions } from 'edge-core-js/types'
-
+import { EthereumEngine } from './ethEngine'
 import type { EthereumSettings } from './ethTypes.js'
 import { makeEthereumBasedPluginInner } from './ethBasedPlugin'
+
 export const imageServerUrl = 'https://developer.airbitz.co/content'
 
-const defaultNetworkFees = {
-  default: {
-    gasLimit: {
-      regularTransaction: '21000',
-      tokenTransaction: '200000'
-    },
-    gasPrice: {
-      lowFee: '59240000',
-      standardFeeLow: '59240000', // TODO: check this values
-      standardFeeHigh: '59240000',
-      standardFeeLowAmount: '59240000',
-      standardFeeHighAmount: '59240000',
-      highFee: '59240000'
+export const checkUpdateNetworkFees = async (engine: EthereumEngine) => {
+  const actualGasPrice = parseInt(engine.walletLocalData.otherData.networkFees['default'].gasPrice.standardFeeLow)
+  try {
+    // fetchPostInfura was fetchPostPublicNode before
+    const jsonObj = await engine.fetchPostInfura('eth_gasPrice', [])
+    const newGasPrice = parseInt(jsonObj.result, 16)
+
+    if (newGasPrice !== actualGasPrice) {
+      // check first if changed
+      engine.walletLocalData.otherData.networkFees['default'].gasPrice.standardFeeLow = newGasPrice.toString()
+      engine.walletLocalData.otherData.networkFees['default'].gasPrice.standardFeeHigh = Math.round(newGasPrice * 1.25).toString()
+      engine.walletLocalData.otherData.networkFees['default'].gasPrice.standardFeeLowAmount = newGasPrice.toString()
+      engine.walletLocalData.otherData.networkFees['default'].gasPrice.standardFeeHighAmount = Math.round(newGasPrice * 1.25).toString()
+      engine.walletLocalData.otherData.networkFees['default'].gasPrice.highFee = Math.round(newGasPrice * 1.5).toString()
+      engine.walletLocalDataDirty = true
     }
+  } catch (err) {
+    engine.log('Error fetching networkFees')
+    engine.log(err)
   }
 }
 
@@ -28,11 +34,14 @@ const otherSettings: EthereumSettings = {
   etherscanApiServers: [
     'https://blockscout.com/rsk/mainnet'
   ],
+  blockcypherApiServers: [],
+  superethServers: [],
+  infuraServers: ['https://public-node.rsk.co'],
   iosAllowedTokens: { RIF: true },
   uriNetworks: ['rsk', 'rbtc'],
   ercTokenStandard: 'RRC20',
   chainId: 30,
-  defaultNetworkFees
+  checkUnconfirmedTransactions: false
 }
 
 const defaultSettings: any = {
@@ -78,7 +87,6 @@ export const rskCurrencyInfo: EdgeCurrencyInfo = {
     }
   ]
 }
-
 
 export const makeRskPlugin = (opts: EdgeCorePluginOptions) => {
   return makeEthereumBasedPluginInner(opts, rskCurrencyInfo)

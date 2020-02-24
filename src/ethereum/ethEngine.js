@@ -541,7 +541,6 @@ export class EthereumEngine extends CurrencyEngine {
   async checkUpdateNetworkFees () {
     const { checkUpdateNetworkFees } = this.currencyInfo.defaultSettings.otherSettings
     if (checkUpdateNetworkFees) return checkUpdateNetworkFees()
-    if (this.walletLocalData.otherData.networkFees['default'])
     try {
       const infoServer = getEdgeInfoServer()
       const url = `${infoServer}/v1/networkFees/${this.currencyInfo.currencyCode}`
@@ -862,10 +861,11 @@ export class EthereumEngine extends CurrencyEngine {
     let otherParams: Object = {}
     const { gasLimit, gasPrice } = calcMiningFee(
       edgeSpendInfo,
-      this.walletLocalData.otherData.networkFees
+      this.walletLocalData.otherData.networkFees,
+      this.currencyInfo
     )
 
-    let tokenInfo = {}
+    const tokenInfo = {}
     tokenInfo.contractAddress = ''
 
     if (currencyCode === this.currencyInfo.currencyCode) {
