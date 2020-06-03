@@ -389,7 +389,7 @@ export class EosEngine extends CurrencyEngine {
       this.log('looping through checkIncomingTransactions')
       // Use hyperion API with a block producer. "transfers" essentially mean transactions
       // may want to move to get_actions at the request of block producer
-      const url = `/v2/history/get_transfers?to=${acct}&symbol=${currencyCode}&skip=${skip}&limit=${limit}&sort=desc`
+      const url = `/v2/history/get_actions?transfer.to=${acct}&transfer.symbol=${currencyCode}&skip=${skip}&limit=${limit}&sort=desc`
       const result = await this.multicastServers('getIncomingTransactions', url)
       const actionsObject = await result.json()
       let actions = []
@@ -472,14 +472,9 @@ export class EosEngine extends CurrencyEngine {
             server => async () => {
               const url = server + params[0]
               const result = await this.eosJsConfig.fetch(url)
-              this.log(
-                'multicast in / out tx server: ',
-                server,
-                ' and result: ',
-                result
-              )
               const parsedUrl = parse(url, {}, true)
               if (!result.ok) {
+                this.log('multicast in / out tx server error: ', server)
                 throw new Error(
                   `The server returned error code ${result.status} for ${parsedUrl.hostname}`
                 )
