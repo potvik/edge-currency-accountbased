@@ -72,7 +72,12 @@ const otherSettings: EosSettings = {
     'https://eosapi.blockmatrix.network',
     'https://node.eosflare.io'
   ],
-  eosFuelServers: ['https://eos.greymass.com']
+  eosFuelServers: ['https://eos.greymass.com'],
+  startingResources: {
+    ram: 8,
+    cpu: 2,
+    net: 10
+  }
 }
 
 const defaultSettings: any = {
